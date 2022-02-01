@@ -1,0 +1,74 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name | quote }}
+  namespace: {{ required "A valid .Values.namespace entry is required" .Values.namespace }}
+  labels:
+    {{- include "helm-k8s-php-deployer.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "helm-k8s-php-deployer.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "helm-k8s-php-deployer.selectorLabels" . | nindent 8 }}
+      {{- if (or .Values.podAnnotations .Values.developmentMode) }}
+      annotations:
+        {{- with .Values.podAnnotations }}
+          {{- toYaml . | nindent 8 }}
+        {{- end }}
+        {{- if .Values.developmentMode }}
+          date: {{ now }}
+        {{- end }}
+      {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      affinity:
+        podAntiAffinity:
+          {{- if .Values.hardAntiAffinity }}
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: {{ include "helm-k8s-php-deployer.name" . }}
+                  app.kubernetes.io/instance: {{ .Release.Name }}
+              topologyKey: kubernetes.io/hostname
+          {{- else }}
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: {{ include "helm-k8s-php-deployer.name" . }}
+                    app.kubernetes.io/instance: {{ .Release.Name }}
+                topologyKey: kubernetes.io/hostname
+          {{- end }}
+      containers:
+        - name: {{ .Release.Name | quote }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy | quote }}
+          env:
+            {{- range $key, $value := .Values.env }}
+            - name: {{ $key | quote }}
+              value: {{ tpl $value $ | quote }}
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          {{- if .Values.health.enabled }}
+          livenessProbe:
+            httpGet:
+              path: {{ required "health.livenessPath must be set if health probes are enabled" .Values.health.livenessPath }}
+              port: {{ .Values.service.port }}
+            initialDelaySeconds: {{ required "health.initialDelaySeconds must be set if health probes are enabled" .Values.health.initialDelaySeconds }}
+            periodSeconds: {{ required "health.periodSeconds must be set if health probes are enabled" .Values.health.periodSeconds }}
+          readinessProbe:
+            httpGet:
+              path: {{ required "health.readinessPath must be set if health probes are enabled" .Values.health.readinessPath }}
+              port: {{ .Values.service.port }}
+            initialDelaySeconds: {{ required "health.initialDelaySeconds must be set if health probes are enabled" .Values.health.initialDelaySeconds }}
+            periodSeconds: {{ required "health.periodSeconds must be set if health probes are enabled" .Values.health.periodSeconds }}
+          {{- end }}
